@@ -1,0 +1,111 @@
+name: Build APK
+run-name: build-${{ inputs.build_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Build ID
+        required: true
+      app_name:
+        description: App name
+        required: true
+      package:
+        description: Package name
+        required: true
+      mode:
+        description: url or file
+        required: true
+        default: url
+      url:
+        description: Website URL (url mode)
+        required: false
+        default: ''
+      source_url:
+        description: Source zip/html URL (file mode)
+        required: false
+        default: ''
+      icon_url:
+        description: Icon image URL
+        required: false
+        default: ''
+      orientation:
+        description: unspecified, portrait or landscape
+        required: false
+        default: unspecified
+      refresh:
+        description: Pull to refresh (true/false)
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BUILD_ID: ${{ inputs.build_id }}
+      APP_NAME: ${{ inputs.app_name }}
+      APP_ID: ${{ inputs.package }}
+      MODE: ${{ inputs.mode }}
+      START_URL: ${{ inputs.url }}
+      SOURCE_URL: ${{ inputs.source_url }}
+      ICON_URL: ${{ inputs.icon_url }}
+      ORIENT: ${{ inputs.orientation }}
+      REFRESH: ${{ inputs.refresh }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Android SDK
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          if [ ! -d "$ANDROID_HOME/platforms/android-34" ]; then "$SDKM" "platforms;android-34"; fi
+          if [ ! -d "$ANDROID_HOME/build-tools/34.0.0" ]; then "$SDKM" "build-tools;34.0.0"; fi
+
+      - name: ImageMagick
+        run: command -v convert > /dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
+
+      - name: Prepare app
+        run: python3 scripts/prepare.py
+
+      - name: Build APK
+        run: |
+          set -e
+          keytool -genkeypair -keystore "$RUNNER_TEMP/release.jks" -alias app \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android-build -keypass android-build -dname "CN=Mr Ai Prime"
+          cd android
+          gradle assembleRelease --no-daemon \
+            -PappId="$FINAL_APP_ID" -Porient="$FINAL_ORIENT" \
+            -PksPath="$RUNNER_TEMP/release.jks" -PksPass=android-build
+
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk app.apk
+          gh release create "build-$BUILD_ID" app.apk --title "build-$BUILD_ID" --notes "APK build $BUILD_ID"
+
+      - name: Cleanup old builds
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 200 --json tagName,createdAt \
+            -q '.[] | select(.createdAt < (now - 172800 | todate)) | .tagName' \
+            | xargs -r -n1 gh release delete --cleanup-tag -y
