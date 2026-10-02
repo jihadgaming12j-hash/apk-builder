@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.mrai.shell'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId project.findProperty('appId') ?: 'com.mrai.app'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+        manifestPlaceholders = [orient: project.findProperty('orient') ?: 'unspecified']
+    }
+
+    signingConfigs {
+        release {
+            storeFile file(project.findProperty('ksPath') ?: 'missing.jks')
+            storePassword project.findProperty('ksPass') ?: ''
+            keyAlias 'app'
+            keyPassword project.findProperty('ksPass') ?: ''
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+}
